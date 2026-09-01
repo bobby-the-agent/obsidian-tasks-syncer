@@ -129,26 +129,29 @@ describe("Microsoft OAuth state", () => {
 		expect(close).toHaveBeenCalledOnce();
 	});
 
-	it("denies popups, uses unique ephemeral partitions, and waits for fixed redirect query values", async () => {
-		const windows: Array<{ handlers: Map<string, (...args: any[]) => void>; close: ReturnType<typeof vi.fn>; removeWebListener: ReturnType<typeof vi.fn>; removeWindowListener: ReturnType<typeof vi.fn> }> = [];
+	it("keeps provider popups inside the OAuth window, uses unique ephemeral partitions, and waits for fixed redirect query values", async () => {
+		const windows: Array<{ handlers: Map<string, (...args: any[]) => void>; close: ReturnType<typeof vi.fn>; loadURL: ReturnType<typeof vi.fn>; popupHandler?: (details: { url: string }) => unknown; removeWebListener: ReturnType<typeof vi.fn>; removeWindowListener: ReturnType<typeof vi.fn> }> = [];
 		vi.mocked(BrowserWindow).mockImplementation(function BrowserWindowMock() {
 			const handlers = new Map<string, (...args: any[]) => void>();
-			const entry = { handlers, close: vi.fn(), removeWebListener: vi.fn(), removeWindowListener: vi.fn() };
+			const entry: typeof windows[number] = { handlers, close: vi.fn(), loadURL: vi.fn(async () => {}), removeWebListener: vi.fn(), removeWindowListener: vi.fn() };
 			windows.push(entry);
 			return {
 				webContents: {
 					on: (event: string, handler: (...args: any[]) => void) => handlers.set(event, handler),
 					removeListener: entry.removeWebListener,
-					setWindowOpenHandler: vi.fn((handler: () => unknown) => { expect(handler()).toEqual({ action: "deny" }); }),
+					setWindowOpenHandler: vi.fn((handler: (details: { url: string }) => unknown) => { entry.popupHandler = handler; }),
 				},
 				on: (event: string, handler: (...args: any[]) => void) => handlers.set(event, handler),
 				removeListener: entry.removeWindowListener,
-				loadURL: vi.fn(async () => {}),
+				loadURL: entry.loadURL,
 				isDestroyed: () => false,
 				close: entry.close,
 			} as any;
 		});
 		const first = openOAuthWindow("https://login.example/one", "http://localhost:5000/callback?tenant=personal");
+		expect(windows[0].loadURL).toHaveBeenCalledWith("https://login.example/one");
+		expect(windows[0].popupHandler?.({ url: "https://ticktick.com/signin?continue=oauth" })).toEqual({ action: "deny" });
+		expect(windows[0].loadURL).toHaveBeenCalledWith("https://ticktick.com/signin?continue=oauth");
 		windows[0].handlers.get("will-navigate")?.({ preventDefault: vi.fn() }, "http://localhost:5000/callback?tenant=other&code=wrong");
 		expect(windows[0].close).not.toHaveBeenCalled();
 		windows[0].handlers.get("will-redirect")?.({ preventDefault: vi.fn() }, "http://localhost:5000/callback?tenant=personal&code=one");

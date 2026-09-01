@@ -139,7 +139,10 @@ export function openOAuthWindow(authUrl: string, redirectUrl: string, signal?: A
 		};
 		const abort = () => finish(abortError());
 		const closed = () => finish(new Error("OAuth login window was closed."));
-		win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+		win.webContents.setWindowOpenHandler((details: { url: string }) => {
+			if (!settled && details.url) void win.loadURL(details.url).catch((error: Error) => finish(error));
+			return { action: "deny" };
+		});
 		win.webContents.on("will-redirect", inspect);
 		win.webContents.on("will-navigate", inspect);
 		win.on("closed", closed);
