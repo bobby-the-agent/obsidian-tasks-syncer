@@ -8,7 +8,7 @@ import {
 	type SettingDefinitionRender,
 } from "obsidian";
 import TaskSyncerPlugin from "./main";
-import { playConfetti } from "./utils";
+import { notify, playConfetti } from "./utils";
 import { ProviderId } from "./types";
 
 export { DEFAULT_SETTINGS } from "./settings-model";
@@ -221,9 +221,10 @@ export class TaskSyncerSettingTab extends PluginSettingTab {
 
 		return {
 			name: `${providerName} OAuth credentials`,
-			desc: "Enter the Obsidian SecretStorage ID that contains this provider's client secret. Internal token-cache secrets are managed automatically and should not be selected here.",
+			desc: "Store the OAuth client secret in Obsidian SecretStorage. The secret value is never saved in data.json.",
 			aliases: ["Client ID", "Client secret", "OAuth", "SecretStorage"],
 			render: (setting) => {
+				let pendingClientSecret = "";
 				setting.addText((text) =>
 					text
 						.setPlaceholder("Client ID")
@@ -236,6 +237,27 @@ export class TaskSyncerSettingTab extends PluginSettingTab {
 								),
 							);
 						}),
+				);
+
+				setting.addText((text) => {
+					text
+						.setPlaceholder("Paste client secret")
+						.onChange((value) => {
+							pendingClientSecret = value;
+						});
+					text.inputEl.type = "password";
+				});
+
+				setting.addButton((button) =>
+					button.setButtonText("Save secret").onClick(() => {
+						this.execute("Client secret update failed", async () => {
+							await this.plugin.updateProviderClientSecret(
+								pendingClientSecret,
+							);
+							pendingClientSecret = "";
+							notify("Client secret saved to SecretStorage.", "success");
+						});
+					}),
 				);
 
 				setting.addText((text) =>
