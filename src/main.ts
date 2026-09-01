@@ -19,6 +19,7 @@ import {
 } from "./types";
 import { canRunCommand, CommandId, COMMAND_IDS } from "./commands";
 import {
+	changeProviderClientSecret,
 	changeProviderCredential,
 	changeTimeZone,
 	SettingsEffects,
@@ -294,6 +295,14 @@ export default class TaskSyncerPlugin extends Plugin {
 		await changeProviderCredential(
 			this.settings,
 			key,
+			value,
+			this.settingsEffects(),
+		);
+	}
+	async updateProviderClientSecret(value: string): Promise<void> {
+		await changeProviderClientSecret(
+			this.settings,
+			this.secretStore,
 			value,
 			this.settingsEffects(),
 		);
