@@ -42,7 +42,7 @@ async function waitForGet(url: string): Promise<string> {
 }
 
 describe("OAuth browser authorization", () => {
-it("requires configured redirect query parameters to match", () => {
+	it("requires configured redirect query parameters to match", () => {
 		expect(isExactRedirect("http://localhost:5000/callback?tenant=other&code=x", "http://localhost:5000/callback?tenant=personal")).toBe(false);
 		expect(isExactRedirect("http://localhost:5000/callback?tenant=personal&code=x", "http://localhost:5000/callback?tenant=personal")).toBe(true);
 		expect(isExactRedirect("http://localhost:5000/callback?tenant=personal&extra=value&code=x&state=s", "http://localhost:5000/callback?tenant=personal")).toBe(false);
