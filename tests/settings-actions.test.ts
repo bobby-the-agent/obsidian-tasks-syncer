@@ -31,12 +31,12 @@ describe("settings actions", () => {
 		expect(effects.save).not.toHaveBeenCalled();
 	});
 
-	it("stores the selected provider client secret in SecretStorage and invalidates stale tokens", async () => {
+	it("stores the selected provider client secret under the default background SecretStorage key", async () => {
 		const settings = migrateSettings({
 			provider: "ticktick",
 			providers: {
 				ticktick: {
-					clientSecretId: "task-syncer-plugin-ticktick-client-secret",
+					clientSecretId: "custom-user-facing-key",
 				},
 			},
 		});
@@ -49,6 +49,8 @@ describe("settings actions", () => {
 		await changeProviderClientSecret(settings, secrets, "ticktick-secret", effects);
 
 		expect(secrets.read("task-syncer-plugin-ticktick-client-secret")).toBe("ticktick-secret");
+		expect(secrets.read("custom-user-facing-key")).toBeNull();
+		expect(settings.providers.ticktick.clientSecretId).toBe("task-syncer-plugin-ticktick-client-secret");
 		expect(JSON.stringify(settings)).not.toContain("ticktick-secret");
 		expect(order).toEqual(["logout", "rebuild"]);
 		expect(effects.save).toHaveBeenCalledOnce();
@@ -67,17 +69,19 @@ describe("settings actions", () => {
 		expect(effects.save).not.toHaveBeenCalled();
 	});
 
-	it("rejects invalid provider client secret IDs before mutating SecretStorage", async () => {
+	it("repairs invalid provider client secret IDs before saving the secret", async () => {
 		const settings = migrateSettings({ version: 3, provider: "ticktick", providers: {} });
 		settings.providers.ticktick.clientSecretId = "task-syncer-plugin-ticktick-token-cache";
 		const secrets = new MemorySecretStore();
 		const effects = actions();
 
-		await expect(changeProviderClientSecret(settings, secrets, "ticktick-secret", effects)).rejects.toThrow(/client secret reference/i);
+		await changeProviderClientSecret(settings, secrets, "ticktick-secret", effects);
 
 		expect(secrets.read("task-syncer-plugin-ticktick-token-cache")).toBeNull();
-		expect(effects.logout).not.toHaveBeenCalled();
-		expect(effects.save).not.toHaveBeenCalled();
+		expect(secrets.read("task-syncer-plugin-ticktick-client-secret")).toBe("ticktick-secret");
+		expect(settings.providers.ticktick.clientSecretId).toBe("task-syncer-plugin-ticktick-client-secret");
+		expect(effects.logout).toHaveBeenCalledOnce();
+		expect(effects.save).toHaveBeenCalledOnce();
 	});
 
 	it("rebuilds for a timezone change without logging out", async () => {

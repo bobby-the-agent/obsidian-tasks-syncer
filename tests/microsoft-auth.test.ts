@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { BrowserWindow } from "@electron/remote";
 import { requestUrl } from "obsidian";
+import { get } from "http";
+import { createServer } from "net";
+import { setTimeout as delay } from "timers/promises";
 import { isExactRedirect, MicrosoftAuthProvider, ObsidianMsalNetworkClient, openOAuthWindow } from "../src/auth/microsoft";
 
 vi.mock("@electron/remote", () => ({ BrowserWindow: vi.fn() }));
@@ -39,6 +42,40 @@ function deferred<T>() {
 	let resolve!: (value: T) => void;
 	const promise = new Promise<T>(done => { resolve = done; });
 	return { promise, resolve };
+}
+
+async function getFreePort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const server = createServer();
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			const address = server.address();
+			server.close(() => {
+				if (address && typeof address === "object") resolve(address.port);
+				else reject(new Error("Unable to allocate test port."));
+			});
+		});
+	});
+}
+
+async function waitForGet(url: string): Promise<string> {
+	let lastError: unknown;
+	for (let attempt = 0; attempt < 20; attempt++) {
+		try {
+			return await new Promise((resolve, reject) => {
+				get(url, response => {
+					let body = "";
+					response.setEncoding("utf8");
+					response.on("data", chunk => { body += chunk; });
+					response.on("end", () => resolve(body));
+				}).on("error", reject);
+			});
+		} catch (error) {
+			lastError = error;
+			await delay(25);
+		}
+	}
+	throw lastError;
 }
 
 describe("Microsoft OAuth state", () => {
@@ -129,26 +166,29 @@ describe("Microsoft OAuth state", () => {
 		expect(close).toHaveBeenCalledOnce();
 	});
 
-	it("denies popups, uses unique ephemeral partitions, and waits for fixed redirect query values", async () => {
-		const windows: Array<{ handlers: Map<string, (...args: any[]) => void>; close: ReturnType<typeof vi.fn>; removeWebListener: ReturnType<typeof vi.fn>; removeWindowListener: ReturnType<typeof vi.fn> }> = [];
+	it("keeps provider popups inside the OAuth window, uses unique ephemeral partitions, and waits for fixed redirect query values", async () => {
+		const windows: Array<{ handlers: Map<string, (...args: any[]) => void>; close: ReturnType<typeof vi.fn>; loadURL: ReturnType<typeof vi.fn>; popupHandler?: (details: { url: string }) => unknown; removeWebListener: ReturnType<typeof vi.fn>; removeWindowListener: ReturnType<typeof vi.fn> }> = [];
 		vi.mocked(BrowserWindow).mockImplementation(function BrowserWindowMock() {
 			const handlers = new Map<string, (...args: any[]) => void>();
-			const entry = { handlers, close: vi.fn(), removeWebListener: vi.fn(), removeWindowListener: vi.fn() };
+			const entry: typeof windows[number] = { handlers, close: vi.fn(), loadURL: vi.fn(async () => {}), removeWebListener: vi.fn(), removeWindowListener: vi.fn() };
 			windows.push(entry);
 			return {
 				webContents: {
 					on: (event: string, handler: (...args: any[]) => void) => handlers.set(event, handler),
 					removeListener: entry.removeWebListener,
-					setWindowOpenHandler: vi.fn((handler: () => unknown) => { expect(handler()).toEqual({ action: "deny" }); }),
+					setWindowOpenHandler: vi.fn((handler: (details: { url: string }) => unknown) => { entry.popupHandler = handler; }),
 				},
 				on: (event: string, handler: (...args: any[]) => void) => handlers.set(event, handler),
 				removeListener: entry.removeWindowListener,
-				loadURL: vi.fn(async () => {}),
+				loadURL: entry.loadURL,
 				isDestroyed: () => false,
 				close: entry.close,
 			} as any;
 		});
 		const first = openOAuthWindow("https://login.example/one", "http://localhost:5000/callback?tenant=personal");
+		expect(windows[0].loadURL).toHaveBeenCalledWith("https://login.example/one");
+		expect(windows[0].popupHandler?.({ url: "https://ticktick.com/signin?continue=oauth" })).toEqual({ action: "deny" });
+		expect(windows[0].loadURL).toHaveBeenCalledWith("https://ticktick.com/signin?continue=oauth");
 		windows[0].handlers.get("will-navigate")?.({ preventDefault: vi.fn() }, "http://localhost:5000/callback?tenant=other&code=wrong");
 		expect(windows[0].close).not.toHaveBeenCalled();
 		windows[0].handlers.get("will-redirect")?.({ preventDefault: vi.fn() }, "http://localhost:5000/callback?tenant=personal&code=one");
@@ -168,6 +208,33 @@ describe("Microsoft OAuth state", () => {
 			expect(entry.removeWebListener).toHaveBeenCalledTimes(2);
 			expect(entry.removeWindowListener).toHaveBeenCalledOnce();
 		}
+	});
+
+	it("captures loopback redirects from the system browser", async () => {
+		const port = await getFreePort();
+		const redirectUrl = `http://127.0.0.1:${port}/callback?tenant=personal`;
+		const close = vi.fn();
+		vi.mocked(BrowserWindow).mockImplementationOnce(function BrowserWindowMock() {
+			return {
+				webContents: {
+					on: vi.fn(),
+					removeListener: vi.fn(),
+					setWindowOpenHandler: vi.fn(),
+				},
+				on: vi.fn(),
+				removeListener: vi.fn(),
+				loadURL: vi.fn(async () => {}),
+				isDestroyed: () => false,
+				close,
+			} as any;
+		});
+
+		const authorization = openOAuthWindow("https://login.example/authorize", redirectUrl);
+		const body = await waitForGet(`${redirectUrl}&code=external&state=expected`);
+
+		expect(body).toContain("You can return to Obsidian");
+		await expect(authorization).resolves.toContain("code=external");
+		expect(close).toHaveBeenCalledOnce();
 	});
 
 	it("closes and rejects when navigation supplies a malformed URL", async () => {
