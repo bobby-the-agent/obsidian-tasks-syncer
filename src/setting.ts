@@ -221,8 +221,8 @@ export class TaskSyncerSettingTab extends PluginSettingTab {
 
 		return {
 			name: `${providerName} OAuth credentials`,
-			desc: "Store the OAuth client secret in Obsidian SecretStorage. The secret value is never saved in data.json.",
-			aliases: ["Client ID", "Client secret", "OAuth", "SecretStorage"],
+			desc: "Enter the OAuth client ID and save the client secret securely in Obsidian SecretStorage.",
+			aliases: ["Client ID", "Client secret", "OAuth"],
 			render: (setting) => {
 				let pendingClientSecret = "";
 				setting.addText((text) =>
@@ -258,20 +258,6 @@ export class TaskSyncerSettingTab extends PluginSettingTab {
 							notify("Client secret saved to SecretStorage.", "success");
 						});
 					}),
-				);
-
-				setting.addText((text) =>
-					text
-						.setPlaceholder(`task-syncer-plugin-${provider}-client-secret`)
-						.setValue(config.clientSecretId)
-						.onChange((value) => {
-							this.execute("Credential update failed", () =>
-								this.plugin.updateProviderCredential(
-									"clientSecretId",
-									value.trim(),
-								),
-							);
-						}),
 				);
 			},
 		};
